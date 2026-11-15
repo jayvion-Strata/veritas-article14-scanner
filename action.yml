@@ -1,0 +1,161 @@
+name: "Veritas EU AI Act Article 14 & Zero-PII Auditor"
+author: "Veritas Governance Architecture"
+description: "CI/CD gate for EU AI Act Art. 14 HITL dwell locks (>=2500ms), GDPR Art. 25 SHA-256 PII masking, and Merkle state attestation."
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  trace-file:
+    description: "Path to JSON agent state traces. Runs built-in diagnostic sample if file is omitted."
+    required: false
+    default: "agent_traces.json"
+  fail-on-violation:
+    description: "Block the Pull Request (exit code 1) when statutory violations are detected ('true' or 'false')."
+    required: false
+    default: "true"
+  post-pr-comment:
+    description: "Automatically post or update a sticky compliance audit report on the Pull Request ('true' or 'false')."
+    required: false
+    default: "true"
+  github-token:
+    description: "GitHub token used to post Pull Request audit comments."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  violations-count:
+    description: "Total number of EU AI Act / GDPR / NIST violations detected."
+    value: ${{ steps.audit.outputs.violations_count }}
+  audit-status:
+    description: "Final compliance verdict (COMPLIANT or NON_COMPLIANT)."
+    value: ${{ steps.audit.outputs.audit_status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Veritas Article 14 Audit & PR Attestation
+      id: audit
+      shell: bash
+      env:
+        INPUT_TRACE_FILE: ${{ inputs.trace-file }}
+        INPUT_FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        INPUT_POST_COMMENT: ${{ inputs.post-pr-comment }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        python3 - << 'EOF'
+        import json, os, sys, urllib.request, urllib.error
+        from pathlib import Path
+
+        action_path = os.environ.get("ACTION_PATH", ".")
+        sys.path.insert(0, action_path)
+        import article14_scanner as scanner
+
+        trace_path = Path(os.environ.get("INPUT_TRACE_FILE", "agent_traces.json"))
+        if trace_path.is_file():
+            with open(trace_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                records = data if isinstance(data, list) else [data]
+            source_label = f"`{trace_path}`"
+        else:
+            records = scanner.SAMPLE_NON_COMPLIANT_TRACES
+            source_label = "Built-in Sample Traces *(No trace file found at target path)*"
+
+        rows = []
+        total_violations = 0
+        for idx, rec in enumerate(records, 1):
+            tid = rec.get("task_id", f"RECORD_{idx}")
+            dwell = int(rec.get("operator_dwell_ms", 0))
+            errs = scanner.audit_state(idx, rec)
+            total_violations += len(errs)
+            if errs:
+                status = "❌ **NON-COMPLIANT**"
+                detail = "<br>".join(errs)
+            else:
+                status = "✅ **COMPLIANT**"
+                detail = "All statutory checks passed (`>=2,500ms` dwell, `sha256:` PII mask, Merkle hash verified)."
+            rows.append(f"| `{tid}` | `{dwell}ms` | {status} | {detail} |")
+
+        verdict = "NON_COMPLIANT" if total_violations > 0 else "COMPLIANT"
+        badge_color = "ef4444" if total_violations > 0 else "10b981"
+        badge_text = f"{total_violations}_Violations_Detected" if total_violations > 0 else "Article_14_Verified"
+
+        md = [
+            "<!-- veritas-article14-audit -->",
+            "### 🛡️ Veritas EU AI Act Article 14 & Zero-PII Compliance Gate",
+            f"[![Veritas Status](https://img.shields.io/badge/EU_AI_Act_Art._14-{badge_text}-{badge_color}?style=for-the-badge)](https://governance.veritas-auditcomp.com) "
+            "[![Tri-Modal Sandbox](https://img.shields.io/badge/Interactive_Demo-2,500ms_Dwell_Workbench-3b82f6?style=for-the-badge)](https://governance.veritas-auditcomp.com)",
+            "",
+            f"**Trace Source Audited:** {source_label} | **Records Evaluated:** `{len(records)}` | **Statutory Violations:** `{total_violations}`",
+            "",
+            "| Task ID | Operator Dwell | Verdict | Statutory Audit Findings (EU AI Act / GDPR / NIST) |",
+            "| :--- | :--- | :--- | :--- |",
+            *rows,
+            "",
+        ]
+
+        if total_violations > 0:
+            md.extend([
+                "---",
+                "#### ⚠️ Production Remediation Required before Merge",
+                "High-risk AI executions lacking a **>=2,500ms hardware cognitive dwell lock** or **salted SHA-256 PII masking** violate **EU AI Act Article 14(4)(b)** and **GDPR Article 25**.",
+                "- 🖥️ **Test the Reference 2,500ms Dwell-Lock UI:** [governance.veritas-auditcomp.com](https://governance.veritas-auditcomp.com)",
+                "- 🔐 **Inspect the RFC 3161 / Merkle Sidecar OpenAPI Spec:** [api.veritas-auditcomp.com/docs](https://api.veritas-auditcomp.com/docs)",
+                "- 📦 **Download Drop-In Production Remediation Kit (HTML5 UI + LangGraph + PostgreSQL Immutability Sidecar):** [Veritas Licensing ($49 / $149)](https://governance.veritas-auditcomp.com/#pricing)"
+            ])
+
+        comment_body = "\n".join(md)
+
+        # Write to GitHub Actions Step Summary
+        summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_file:
+            with open(summary_file, "a", encoding="utf-8") as sf:
+                sf.write(comment_body + "\n")
+
+        # Write GitHub Action Outputs
+        out_file = os.environ.get("GITHUB_OUTPUT")
+        if out_file:
+            with open(out_file, "a", encoding="utf-8") as of:
+                of.write(f"violations_count={total_violations}\n")
+                of.write(f"audit_status={verdict}\n")
+
+        # Post or Update Sticky PR Comment if triggered inside a Pull Request
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        token = os.environ.get("GITHUB_TOKEN")
+        repo = os.environ.get("GITHUB_REPOSITORY")
+        post_comment = os.environ.get("INPUT_POST_COMMENT", "true").lower() == "true"
+
+        if post_comment and event_path and os.path.isfile(event_path) and token and repo:
+            with open(event_path, "r", encoding="utf-8") as ef:
+                event = json.load(ef)
+            pr_num = event.get("pull_request", {}).get("number")
+            if pr_num:
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "Content-Type": "application/json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "Veritas-Article14-Scanner"
+                }
+                comments_url = f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments"
+                try:
+                    req = urllib.request.Request(comments_url, headers=headers)
+                    with urllib.request.urlopen(req) as resp:
+                        existing = json.loads(resp.read().decode("utf-8"))
+                    target_id = next((c["id"] for c in existing if "<!-- veritas-article14-audit -->" in c.get("body", "")), None)
+
+                    payload = json.dumps({"body": comment_body}).encode("utf-8")
+                    if target_id:
+                        patch_url = f"https://api.github.com/repos/{repo}/issues/comments/{target_id}"
+                        u_req = urllib.request.Request(patch_url, data=payload, headers=headers, method="PATCH")
+                    else:
+                        u_req = urllib.request.Request(comments_url, data=payload, headers=headers, method="POST")
+                    urllib.request.urlopen(u_req)
+                    print(f"[VERITAS] Sticky compliance table posted to PR #{pr_num}.")
+                except urllib.error.HTTPError as e:
+                    print(f"[VERITAS INFO] Could not post PR comment (HTTP {e.code} - check pull-requests: write permission). Report written to Job Summary.")
+
+        if total_violations > 0 and os.environ.get("INPUT_FAIL_ON_VIOLATION", "true").lower() == "true":
+            sys.exit(1)
+        EOF
