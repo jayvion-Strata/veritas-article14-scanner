@@ -61,3 +61,36 @@ This CLI scanner is the open-core diagnostic linter for the **Veritas Agentic Go
 * **Interactive Tri-Modal HITL Workbench (Live Sandbox):** [https://governance.veritas-auditcomp.com](https://governance.veritas-auditcomp.com)
 * **VPC Merkle Sidecar Swagger Specification:** [https://api.veritas-auditcomp.com/docs](https://api.veritas-auditcomp.com/docs)
 * **Full Self-Serve Production Codebase (HTML5 Dwell-Lock UI + LangGraph Orchestrator + FastAPI/PostgreSQL Immutability Sidecar):** [Download via Veritas Licensing](https://governance.veritas-auditcomp.com/#pricing)
+
+
+---
+
+## Automate PR Compliance Audits (GitHub Actions Marketplace)
+
+Add **Veritas EU AI Act Article 14 Auditor** to your repository's `.github/workflows/eu-ai-act-audit.yml` to automatically audit agent state logs and post a sticky compliance attestation table on every Pull Request:
+
+```yaml
+name: EU AI Act Article 14 Compliance Gate
+
+on:
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  article14-hitl-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run Veritas EU AI Act Article 14 & Zero-PII Auditor
+        uses: Jayvion-Strata/veritas-article14-scanner@v1
+        with:
+          trace-file: "agent_traces.json"
+          fail-on-violation: "true"
+          post-pr-comment: "true"
+```
