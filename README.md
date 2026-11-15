@@ -94,3 +94,32 @@ jobs:
           fail-on-violation: "true"
           post-pr-comment: "true"
 ```
+---
+
+## Drop-In Frontend Widget (`hitl-guard.js`)
+
+Enforce **EU AI Act Article 14(4)(b)** hardware cognitive dwell locks (`>=2,500ms`) on any HTML, React, or Vue approval button with 1 line of code. Automatically pauses if the operator switches tabs and dispatches a `veritas:attested` SHA-256 cryptographic receipt upon human approval.
+
+```html
+<!-- 1. Load the Zero-Dependency Veritas Guard Script -->
+<script src="[https://governance.veritas-auditcomp.com/hitl-guard.js](https://governance.veritas-auditcomp.com/hitl-guard.js)" defer></script>
+
+<!-- 2. Add data-veritas-guard to any High-Risk AI Approval Button -->
+<button
+  id="approve-loan-btn"
+  data-veritas-guard
+  data-veritas-dwell="2500"
+  data-veritas-task-id="TXN-AML-9041"
+  data-veritas-risk="0.92">
+  Approve High-Risk Wire Transfer
+</button>
+
+<script>
+  // Optional: Listen for the cryptographic attestation payload on click
+  document.getElementById("approve-loan-btn").addEventListener("veritas:attested", (e) => {
+    console.log("EU AI Act Article 14 Receipt:", e.detail);
+    // e.detail -> { task_id, operator_dwell_ms: 2512, curr_merkle_hash: "sha256:...", attested_at: "..." }
+  });
+</script>
+```
+> **Note:** The free community widget includes a `"Protected by Veritas"` verification link inside an isolated Shadow DOM. To unlock white-label mode (`data-veritas-key="vts_live_..."`) and automated PostgreSQL Merkle Sidecar ingestion, [upgrade to a Veritas Commercial License](https://governance.veritas-auditcomp.com/#pricing).
